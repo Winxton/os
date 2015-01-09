@@ -46,6 +46,8 @@
 #include "opt-sfs.h"
 #include "opt-net.h"
 
+extern uint32_t dbflags;
+
 /*
  * In-kernel menu and command dispatcher.
  */
@@ -304,6 +306,16 @@ static const struct {
 	{ NULL, NULL }
 };
 
+/*
+ * Command for changing to debug messages to type DB_THREADS
+*/
+static
+int
+cmd_dth (){
+	dbflags = DB_THREADS;
+	return 0;
+}
+
 static
 int
 cmd_mount(int nargs, char **args)
@@ -437,6 +449,7 @@ static const char *opsmenu[] = {
 	"[sync]    Sync filesystems          ",
 	"[panic]   Intentional panic         ",
 	"[q]       Quit and shut down        ",
+	"[dth]	   Enable thread debug messages",
 	NULL
 };
 
@@ -548,6 +561,7 @@ static struct {
 	{ "q",		cmd_quit },
 	{ "exit",	cmd_quit },
 	{ "halt",	cmd_quit },
+	{ "dth", 	cmd_dth },
 
 #if OPT_SYNCHPROBS
 	/* in-kernel synchronization problem(s) */

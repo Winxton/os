@@ -285,7 +285,8 @@ cv_destroy(struct cv *cv)
 void
 cv_wait(struct cv *cv, struct lock *lock)
 {
-    KASSERT(lock != NULL && cv != NULL);
+    KASSERT(lock != NULL);
+    KASSERT(cv != NULL);
 
     // we should hold the lock at this point
     KASSERT(lock_do_i_hold(lock));
@@ -300,7 +301,8 @@ cv_wait(struct cv *cv, struct lock *lock)
 void
 cv_signal(struct cv *cv, struct lock *lock)
 {
-    KASSERT(lock != NULL && cv != NULL);
+    KASSERT(lock != NULL);
+    KASSERT(cv != NULL);
     KASSERT(lock_do_i_hold(lock));
 
     // The condition is now met, wake up the waiting thread
@@ -310,7 +312,8 @@ cv_signal(struct cv *cv, struct lock *lock)
 void
 cv_broadcast(struct cv *cv, struct lock *lock)
 {
-    KASSERT(lock != NULL && cv != NULL);
+    KASSERT(lock != NULL);
+    KASSERT(cv != NULL);
     KASSERT(lock_do_i_hold(lock));        
 
     // The condition is now met, wake up all

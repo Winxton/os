@@ -150,12 +150,10 @@ cat_before_eating(unsigned int bowl)
   // critical section: this is needed for the conditional variable check on the number of eating mice
   lock_acquire(mutex);
 
-    kprintf("Cat WAITS at bowl: %d\n", bowl);
-    // oh no! A mouse is currently eating
-
     bool can_continue = false;
     while (!can_continue) {
 
+      // oh no! A mouse is currently eating
       while (num_mice_eating->sem_count != 0) {
         cv_wait(cat_cv, mutex); // this would release the lock and sleep until awaken
       }
@@ -173,8 +171,6 @@ cat_before_eating(unsigned int bowl)
 
       can_continue = num_mice_eating->sem_count == 0;
     }
-
-    kprintf("Cat EATS bowl: %d\n", bowl);
 
     // should never happen
     KASSERT(num_mice_eating->sem_count == 0);
@@ -209,8 +205,6 @@ cat_after_eating(unsigned int bowl)
   KASSERT(num_mice_eating != NULL && num_cats_eating != NULL);
 
   lock_acquire(mutex);
-
-    kprintf("Cat exits bowl: %d\n", bowl);
 
     // decrease number of eating cats
     P(num_cats_eating);
@@ -248,8 +242,6 @@ mouse_before_eating(unsigned int bowl)
 
   lock_acquire(mutex);
 
-    kprintf("Mouse WAITS at bowl: %d\n", bowl);
-
     bool can_continue = false;
     while (!can_continue) {
       // oh no! a cat is currently eating, I must wait!
@@ -265,8 +257,6 @@ mouse_before_eating(unsigned int bowl)
       // A cat could win the race condition, need to continue waiting
       can_continue = num_cats_eating->sem_count == 0;
     }
-
-    kprintf("Mouse EATS bowl: %d\n", bowl);
 
     // should never happen
     KASSERT(num_cats_eating->sem_count == 0);
@@ -302,8 +292,6 @@ mouse_after_eating(unsigned int bowl)
   KASSERT(num_mice_eating != NULL && num_cats_eating != NULL);
 
   lock_acquire(mutex);
-
-    kprintf("Mouse exits bowl: %d\n", bowl);
 
     // decrease number of eating mice
     P(num_mice_eating);

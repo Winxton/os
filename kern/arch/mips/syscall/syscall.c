@@ -35,7 +35,7 @@
 #include <thread.h>
 #include <current.h>
 #include <syscall.h>
-
+#include "opt-A2.h"
 
 /*
  * System call dispatcher.
@@ -129,6 +129,11 @@ syscall(struct trapframe *tf)
 			    (int)tf->tf_a2,
 			    (pid_t *)&retval);
 	  break;
+	#if OPT_A2
+	case SYS_fork:
+	  err = sys_fork(tf, (pid_t *)&retval);
+	  break;
+	#endif
 #endif // UW
 
 	    /* Add stuff here */
@@ -177,7 +182,47 @@ syscall(struct trapframe *tf)
  * Thus, you can trash it and do things another way if you prefer.
  */
 void
-enter_forked_process(struct trapframe *tf)
+enter_forked_process(void *tf, unsigned int unused)
+#if OPT_A2
 {
+	(void)unused;
+	/* 
+		- make a copy of the trapframe
+		- call mips_usermode with the new, modified trapframe
+	*/
+
+	KASSERT(tf != NULL);
+
+	// shallow copy of trapframe
+	// from kernel heap to stack
+	// trap frame must be on current thread's own stack 
+	struct trapframe stack_tf = *(struct trapframe *)tf;
+
+	kfree(tf);
+
+	// return value of the child is 0, no error
+	stack_tf.tf_v0 = 0;
+	stack_tf.tf_a3 = 0;      /* signal no error */
+
+	/*
+	 * Now, advance the program counter, to avoid restarting
+	 * the syscall over and over again.
+	 */
+	
+	stack_tf.tf_epc += 4;
+
+	/* Make sure the syscall code didn't forget to lower spl */
+	KASSERT(curthread->t_curspl == 0);
+	/* ...or leak any spinlocks */
+	KASSERT(curthread->t_iplhigh_count == 0);
+
+	mips_usermode(&stack_tf);
+
+	panic("Whoa.. returned from user mode!? (it should not return)");
+}
+#else
+{
+	(void)unused;
 	(void)tf;
 }
+#endif

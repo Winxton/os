@@ -51,6 +51,9 @@
 #include <synch.h>
 #include <kern/fcntl.h>  
 
+#include "opt-A2.h"
+#include <kern/limits.h>
+
 /*
  * The process for the kernel; this holds all the kernel-only threads.
  */
@@ -69,7 +72,156 @@ static struct semaphore *proc_count_mutex;
 struct semaphore *no_proc_sem;   
 #endif  // UW
 
+#if OPT_A2
+/* Process table */
+static struct proc_info **process_info_table = NULL;
 
+static void proc_table_init()
+{
+	int max_processes = __PID_MAX - __PID_MIN;
+
+	process_info_table = kmalloc(max_processes * sizeof(struct proc_info *));
+	int i = 0;
+	for (i=0; i<max_processes; i++) {
+		process_info_table[i] = NULL;
+	}
+}
+
+/*
+ * Gets the process table information at the current index
+*/
+struct proc_info *proc_table_get_process_info(pid_t pid) {
+	if (pid < __PID_MIN || pid > __PID_MAX) {
+		return NULL;
+	}
+	int idx = pid - __PID_MIN;
+	return process_info_table[idx];
+}
+
+/*
+ * Removes the process table information at the current index
+*/
+static void proc_table_remove(pid_t pid) {
+	KASSERT(pid >= __PID_MIN && pid <= __PID_MAX);
+
+	int idx = pid - __PID_MIN;
+
+	struct proc_info *cur_proc_info = process_info_table[idx];
+
+	// should only be called if the process has already exited
+	KASSERT(cur_proc_info->proc == NULL);
+
+	lock_destroy(cur_proc_info->lock);
+  	cv_destroy(cur_proc_info->exited_cv);
+	kfree(cur_proc_info);
+
+	// can use this pid for later processes
+	process_info_table[idx] = NULL;
+}
+
+/* 
+ * Add a process to the process table and assign a PID to it
+*/
+static void proc_table_add_process(struct proc *process) {
+	if (process_info_table == NULL) {
+		proc_table_init();
+	}
+
+	int cur_id = 0;
+	int max_processes = __PID_MAX - __PID_MIN;
+
+	// find valid location in the array and set a process there
+	while(process_info_table[cur_id] != NULL && cur_id < max_processes) {
+		cur_id ++;
+	}
+
+	// max number of processes exceeded
+	if (cur_id == max_processes) {
+		// TODO: ERROR
+	}
+
+	// create a new process info structure
+	struct proc_info *proc_info = kmalloc(sizeof(*proc_info));
+	proc_info->proc = process;
+	proc_info->status = _PROC_RUNNING;
+	// set the process's pid upon creation
+	proc_info->pid = (pid_t)(cur_id + __PID_MIN);
+	proc_info->parent_pid = 0; // no parent for now, let fork() handle this
+	proc_info->exit_code = 0;
+
+	proc_info->lock = lock_create("process waitpid lock");
+	if (proc_info->lock == NULL) {
+		panic("process lock_create failed\n");
+	}
+
+	proc_info->exited_cv = cv_create("process exited cv");
+	if (proc_info->exited_cv == NULL) {
+		panic("process exited cv_create failed\n");
+	}
+
+	process->info = proc_info;
+
+	process_info_table[cur_id] = proc_info;
+}
+
+/* 
+ * Handle a process exiting
+ * Clean up:
+ * 	1. If its children has already exited, this process will no longer need their exit codes
+ * 	   so remove the children from the process table
+ * 	2. If its parent has exited, remove the entry from the process table
+ *
+ * Note:
+ * process_info_table[idx]->status == _PROC_EXITED means it has exited but it's exit code is still needed
+ * process_info_table[idx] == NULL means it has exited
+*/
+int proc_table_process_exited(pid_t pid, int exitcode) {
+	// need to clean up the proc_info structures of all its children
+	int max_processes = __PID_MAX - __PID_MIN;
+
+	KASSERT( pid >= __PID_MIN && pid <= __PID_MAX);
+ 
+	// 1. clean up all its children who have exited
+	// since it no longer cares about their exit codes
+	// TODO: this is inefficient.. use an arraylist
+	int i = 0;
+	for (i=0; i<max_processes; i++) {
+		if (process_info_table[i] != NULL 
+			&& process_info_table[i]->status == _PROC_EXITED 
+			&& process_info_table[i]->parent_pid == pid)
+		{
+			proc_table_remove(process_info_table[i]->pid);
+		}
+	}
+
+	// 2. if its parent has exited, then it should clean itself up since nobody cares about it anymore
+	int idx = pid - __PID_MIN;
+	struct proc_info *cur_proc_info = proc_table_get_process_info(pid);
+	struct proc_info *parent_proc_info = proc_table_get_process_info(cur_proc_info->parent_pid);
+
+	// parent already exited (NULL) OR another other process has taken up its spot  
+	if (parent_proc_info == NULL 
+		|| parent_proc_info->status == _PROC_EXITED 
+		|| parent_proc_info->pid != cur_proc_info->parent_pid) {
+
+		// remove current process info from the table
+		proc_table_remove(pid);
+	}
+
+	// there are still processes "interested" in this exitcode (its parent still alive)
+	if (process_info_table[idx] != NULL) {
+		lock_acquire(cur_proc_info->lock);
+			cur_proc_info->exit_code = exitcode;
+			cur_proc_info->status = _PROC_EXITED;
+			// signal to the waiting parent that this process has exited
+			cv_signal(cur_proc_info->exited_cv, cur_proc_info->lock);
+
+		lock_release(cur_proc_info->lock);
+	}
+
+	return 0;
+}
+#endif
 
 /*
  * Create a proc structure.
@@ -103,8 +255,84 @@ proc_create(const char *name)
 	proc->console = NULL;
 #endif // UW
 
+#if OPT_A2
+	/* add the process to the table of processes and get its id */
+	proc_table_add_process(proc);
+#endif
+
 	return proc;
 }
+
+#if OPT_A2
+/*
+ * Create a fresh proc based on the current process
+ * It will inherit the current process' address space
+ */
+struct proc *
+proc_create_forked() {
+	KASSERT(curproc != NULL);
+
+	struct proc *proc;
+	char *console_path;
+
+	proc = proc_create(curproc->p_name);
+	if (proc == NULL) {
+		return NULL;
+	}
+#ifdef UW
+	/* open the console - this should always succeed */
+	console_path = kstrdup("con:");
+	if (console_path == NULL) {
+	  panic("unable to copy console path name during process creation\n");
+	}
+	if (vfs_open(console_path,O_WRONLY,0,&(proc->console))) {
+	  panic("unable to open the console during process creation\n");
+	}
+	kfree(console_path);
+#endif // UW
+
+	/* VM fields */
+
+	// copy the current process's address space
+	struct addrspace *cur_addrspace = curproc_getas();
+	struct addrspace *as;
+	int err = as_copy(cur_addrspace, &as);
+	if (err) {
+		return NULL;
+	}
+	proc->p_addrspace = as;
+
+	/* VFS fields */
+
+#ifdef UW
+	/* we do not need to acquire the p_lock here, the running thread should
+           have the only reference to this process */
+        /* also, acquiring the p_lock is problematic because VOP_INCREF may block */
+	if (curproc->p_cwd != NULL) {
+		VOP_INCREF(curproc->p_cwd);
+		proc->p_cwd = curproc->p_cwd;
+	}
+#else // UW
+	spinlock_acquire(&curproc->p_lock);
+	if (curproc->p_cwd != NULL) {
+		VOP_INCREF(curproc->p_cwd);
+		proc->p_cwd = curproc->p_cwd;
+	}
+	spinlock_release(&curproc->p_lock);
+#endif // UW
+
+#ifdef UW
+	/* increment the count of processes */
+        /* we are assuming that all procs, including those created by fork(),
+           are created using a call to proc_create_runprogram  */
+	P(proc_count_mutex); 
+	proc_count++;
+	V(proc_count_mutex);
+#endif // UW
+
+	return proc;
+}
+#endif
 
 /*
  * Destroy a proc structure.
@@ -123,6 +351,11 @@ proc_destroy(struct proc *proc)
 
 	KASSERT(proc != NULL);
 	KASSERT(proc != kproc);
+
+#if OPT_A2
+	// lets lingering info (exitcode) know that the process has already exited
+	proc->info->proc = NULL; 
+#endif
 
 	/*
 	 * We don't take p_lock in here because we must have the only

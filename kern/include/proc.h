@@ -38,6 +38,7 @@
 
 #include <spinlock.h>
 #include <thread.h> /* required for struct threadarray */
+#include "opt-A2.h"
 
 struct addrspace;
 struct vnode;
@@ -68,8 +69,38 @@ struct proc {
   struct vnode *console;                /* a vnode for the console device */
 #endif
 
-	/* add more material here as needed */
+#if OPT_A2
+    struct proc_info *info;
+#endif
 };
+
+#if OPT_A2
+
+#define _PROC_RUNNING 1
+#define _PROC_EXITED 0
+
+// additional process information
+// which may still be stored AFTER a process is deleted
+struct proc_info {
+	struct proc *proc;
+
+	struct lock *lock;
+	struct cv *exited_cv;
+
+	pid_t parent_pid;
+	pid_t pid;
+
+	int status;
+	int exit_code;
+};
+
+struct proc_info *proc_table_get_process_info(pid_t pid);
+int proc_table_process_exited(pid_t pid, int exitcode);
+
+/* create a new process based on the existing process */
+struct proc *proc_create_forked(void);
+
+#endif
 
 /* This is the process structure for the kernel and for kernel-only threads. */
 extern struct proc *kproc;

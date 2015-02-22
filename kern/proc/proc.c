@@ -78,11 +78,9 @@ static struct proc_info **process_info_table = NULL;
 
 static void proc_table_init()
 {
-	int max_processes = __PID_MAX - __PID_MIN;
-
-	process_info_table = kmalloc(max_processes * sizeof(struct proc_info *));
+	process_info_table = kmalloc( (__MAX_PROCESSES) * sizeof(struct proc_info *));
 	int i = 0;
-	for (i=0; i<max_processes; i++) {
+	for (i=0; i< __MAX_PROCESSES; i++) {
 		process_info_table[i] = NULL;
 	}
 }
@@ -122,22 +120,16 @@ static void proc_table_remove(pid_t pid) {
 /* 
  * Add a process to the process table and assign a PID to it
 */
-static void proc_table_add_process(struct proc *process) {
+static int proc_table_add_process(struct proc *process) {
 	if (process_info_table == NULL) {
 		proc_table_init();
 	}
 
 	int cur_id = 0;
-	int max_processes = __PID_MAX - __PID_MIN;
 
 	// find valid location in the array and set a process there
-	while(process_info_table[cur_id] != NULL && cur_id < max_processes) {
+	while(process_info_table[cur_id] != NULL && cur_id < __MAX_PROCESSES) {
 		cur_id ++;
-	}
-
-	// max number of processes exceeded
-	if (cur_id == max_processes) {
-		// TODO: ERROR
 	}
 
 	// create a new process info structure
@@ -162,6 +154,8 @@ static void proc_table_add_process(struct proc *process) {
 	process->info = proc_info;
 
 	process_info_table[cur_id] = proc_info;
+
+	return 0;
 }
 
 /* 
@@ -177,7 +171,6 @@ static void proc_table_add_process(struct proc *process) {
 */
 int proc_table_process_exited(pid_t pid, int exitcode) {
 	// need to clean up the proc_info structures of all its children
-	int max_processes = __PID_MAX - __PID_MIN;
 
 	KASSERT( pid >= __PID_MIN && pid <= __PID_MAX);
  
@@ -185,7 +178,7 @@ int proc_table_process_exited(pid_t pid, int exitcode) {
 	// since it no longer cares about their exit codes
 	// TODO: this is inefficient.. use an arraylist
 	int i = 0;
-	for (i=0; i<max_processes; i++) {
+	for (i=0; i<__MAX_PROCESSES; i++) {
 		if (process_info_table[i] != NULL 
 			&& process_info_table[i]->status == _PROC_EXITED 
 			&& process_info_table[i]->parent_pid == pid)
@@ -416,7 +409,7 @@ proc_destroy(struct proc *proc)
 	}
 	V(proc_count_mutex);
 #endif // UW
-	
+
 
 }
 

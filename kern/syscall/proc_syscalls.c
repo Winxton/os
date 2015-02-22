@@ -37,8 +37,6 @@ sys_fork(struct trapframe *tf, pid_t *retval)
 
   new_proc->info->parent_pid = curproc->info->pid; 
 
-  // TODO: Check if there are too many processes for both user and system
-
   // make a copy of the trap frame so its child has a copy of it 
   // if parent returns to child before child thread executes
   // the forked thread will free this ( goes against RAII but there's no choice :() )

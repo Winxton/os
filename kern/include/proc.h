@@ -81,6 +81,8 @@ struct proc {
 
 // additional process information
 // which may still be stored AFTER a process is deleted
+// this could have been put inside process, 
+// but I find it a bit cleaner to put inside a separate structure
 struct proc_info {
 	struct proc *proc;
 

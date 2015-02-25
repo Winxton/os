@@ -21,15 +21,25 @@ sys_fork(struct trapframe *tf, pid_t *retval)
 {
   // disable interrupts : makes sure addr space doesn't change before copying
   int spl = splhigh();
+  int err;
 
   // create a new process based on the current process
   // copies the address as well
-  struct proc* new_proc = proc_create_forked();
+  struct proc* new_proc = proc_create_runprogram("[Forked]");
   // Out of memory
   if (new_proc == NULL) {
     splx(spl);
     return ENOMEM;
   }
+
+  // copy the current process's address space
+  struct addrspace *cur_addrspace = curproc_getas();
+  struct addrspace *as;
+  err = as_copy(cur_addrspace, &as);
+  if (err) {
+    return ENOMEM;
+  }
+  new_proc->p_addrspace = as;
 
   // set its parent pid to the pid of the current process
   KASSERT(new_proc->info != NULL);
@@ -51,7 +61,7 @@ sys_fork(struct trapframe *tf, pid_t *retval)
 
   // create a new thread to enter the forked process
 
-  int err = thread_fork(
+  err = thread_fork(
       "[forked process]",
       new_proc,
       (void *)enter_forked_process,

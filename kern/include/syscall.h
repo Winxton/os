@@ -66,6 +66,7 @@ int sys_waitpid(pid_t pid, userptr_t status, int options, pid_t *retval);
 #if OPT_A2
 int sys_execv(struct trapframe *tf, pid_t *retval);
 int sys_fork(struct trapframe *tf, pid_t *retval);
+char **copy_argv_to_user_stack(char **argv_kern, int num_args, vaddr_t *stackptr);
 #endif
 #endif // UW
 

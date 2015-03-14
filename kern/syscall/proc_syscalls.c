@@ -20,28 +20,32 @@
 #include <kern/fcntl.h>
 #include <vfs.h>
 
-static void copy_argv_to_kern(char **argv, char **argv_kern, int arg_num) {
+static void copy_argv_to_kern(char **argv, char **argv_kern, int num_args) {
+  for (int idx = 0; idx < num_args; idx ++) {
 
-  for (int idx = 0; idx < arg_num; idx ++) {
-
-    DEBUG(DB_PROC_SYSCALL, "---------------\n");
     DEBUG(DB_PROC_SYSCALL, "argv[%d]: %s \n", idx, argv[idx]);
 
-    int char_length = strlen(argv[idx]);
-    DEBUG(DB_PROC_SYSCALL, "length of argv[%d]: %d \n", idx, char_length);
+    int str_len = strlen(argv[idx]);
+    DEBUG(DB_PROC_SYSCALL, "length of argv[%d]: %d \n", idx, str_len);
 
     void *usersrc = argv[idx];
 
     // copy it into kernel space
 
-    argv_kern[idx] = kmalloc( (char_length + 1) * sizeof(char));
+    argv_kern[idx] = kmalloc( (str_len + 1) * sizeof(char));
 
     size_t result_str_len;
-    copyinstr(usersrc, argv_kern[idx], char_length * sizeof(char), &result_str_len);
+    copyinstr(usersrc, argv_kern[idx], str_len * sizeof(char), &result_str_len);
+
+    DEBUG(DB_PROC_SYSCALL, "bytes copied of argv[%d]: %d \n", idx, result_str_len);
+    DEBUG(DB_PROC_SYSCALL, "copied result: %s \n", argv_kern[idx]);
+    DEBUG(DB_PROC_SYSCALL, "---------------\n");
   }
 }
 
-static void copy_argv_to_user_stack(char **argv_kern, int num_args, vaddr_t *stackptr){
+char **copy_argv_to_user_stack(char **argv_kern, int num_args, vaddr_t *stackptr){
+  // make sure no interrupt while messing aroud with addresses
+  int spl = splhigh();
 
   int char_addresses[num_args + 1];
 
@@ -50,12 +54,16 @@ static void copy_argv_to_user_stack(char **argv_kern, int num_args, vaddr_t *sta
   copyout((void *)0, (userptr_t) *stackptr, 4);
   char_addresses[num_args] = *stackptr;
 
+  DEBUG(DB_PROC_SYSCALL, "Copy strings pointers to user stack... \n");
+
   // copy each string to the user stack
   for (int idx = num_args-1; idx >= 0; idx --) {
-    DEBUG(DB_PROC_SYSCALL, "--------\n");
-
+    
     const char *str = argv_kern[idx];
+
     int str_len = strlen(str) + 1; // includes null terminator
+
+    DEBUG(DB_PROC_SYSCALL, "Copying: %s\n", str);  
     DEBUG(DB_PROC_SYSCALL, "str_len: %d\n", str_len);  
 
     // pad by 4 bits so that its pointers are bit aligned
@@ -74,6 +82,8 @@ static void copy_argv_to_user_stack(char **argv_kern, int num_args, vaddr_t *sta
     char_addresses[idx] = *stackptr;
 
     DEBUG(DB_PROC_SYSCALL, "Bytes Copied: %d \n", bytes_copied);
+    DEBUG(DB_PROC_SYSCALL, "Space Taken: %d \n", str_len + padding);
+    DEBUG(DB_PROC_SYSCALL, "--------\n");
   }
 
   DEBUG(DB_PROC_SYSCALL, "Copy char pointers to user stack... \n");
@@ -83,17 +93,33 @@ static void copy_argv_to_user_stack(char **argv_kern, int num_args, vaddr_t *sta
       // copy char pointer
       *stackptr -= 4;
       copyout((void *)&char_addresses[idx], (userptr_t)*stackptr, 4);
+
+      DEBUG(DB_PROC_SYSCALL, "argv[%d] (@ %x )--> %x \n", idx, *stackptr, char_addresses[idx]);
   }
 
   // copy pointer to char pointers (char ** argv)
   copyout((void *)stackptr, (userptr_t)(*stackptr - 4), 4);
   *stackptr -= 4;
+
+  // pointer to the argv before the bit aligning the stack ptr
+  char **argv_user = (char **)(* stackptr);
+
+  // Make sure stack pointer is 8 bit aligned
+  DEBUG(DB_PROC_SYSCALL, "Previous Stack Pointer: %x\n", *stackptr);
+
+  if (*stackptr % 8 != 0) {
+    *stackptr -= (8 - *stackptr % 8);
+  }
+
+  DEBUG(DB_PROC_SYSCALL, "Aligned Stack Pointer: %x\n", *stackptr);
+
+  splx(spl);
+  return argv_user;
 };
 
 int
 sys_execv(struct trapframe *tf, pid_t *retval) {
-  int spl = splhigh();
-
+ 
   *retval = 0;
   int result;
   vaddr_t entrypoint, stackptr;
@@ -150,20 +176,9 @@ sys_execv(struct trapframe *tf, pid_t *retval) {
     return result;
   }
 
-  // copy the strings to the user stack
-  copy_argv_to_user_stack(argv_kern, argc, &stackptr);
+  // copy the strings to the user stack and get the pointer to it
+  char **argv_user = copy_argv_to_user_stack(argv_kern, argc, &stackptr);
   
-  char **argv_user = (char **)stackptr;
-  DEBUG(DB_PROC_SYSCALL, "Previous Stack Pointer: %x\n", stackptr);
-
-  // Make sure stack pointer is 8 bit aligned
-  if (stackptr % 8 != 0) {
-    stackptr -= (8 - stackptr % 8);
-  }
-
-  DEBUG(DB_PROC_SYSCALL, "Aligned Stack Pointer: %x\n", stackptr);
-
-  splx(spl);
   enter_new_process(argc /*argc*/, (userptr_t) *argv_user /*userspace addr of argv*/,
         stackptr, entrypoint);
 

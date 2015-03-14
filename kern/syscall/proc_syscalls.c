@@ -43,7 +43,12 @@ static void copy_argv_to_kern(char **argv, char **argv_kern, int arg_num) {
 
 static void copy_argv_to_user_stack(char **argv_kern, int num_args, vaddr_t *stackptr){
 
-  int char_addresses[num_args];
+  int char_addresses[num_args + 1];
+
+  // copy NULL terminator
+  *stackptr -= 4;
+  copyout((void *)0, (userptr_t) *stackptr, 4);
+  char_addresses[num_args] = *stackptr;
 
   // copy each string to the user stack
   for (int idx = num_args-1; idx >= 0; idx --) {
@@ -71,8 +76,10 @@ static void copy_argv_to_user_stack(char **argv_kern, int num_args, vaddr_t *sta
     DEBUG(DB_PROC_SYSCALL, "Bytes Copied: %d \n", bytes_copied);
   }
 
+  DEBUG(DB_PROC_SYSCALL, "Copy char pointers to user stack... \n");
+
   // copy each char pointer to the user stack
-  for (int idx = num_args-1; idx >= 0; idx --) {
+  for (int idx = num_args; idx >= 0; idx --) {
       // copy char pointer
       *stackptr -= 4;
       copyout((void *)&char_addresses[idx], (userptr_t)*stackptr, 4);
@@ -107,8 +114,8 @@ sys_execv(struct trapframe *tf, pid_t *retval) {
     argc ++;
   }
 
-  char **argv_kern = kmalloc(argc * sizeof(char *));
-
+  // argv arguments on the kernel
+  char *argv_kern[argc];
   copy_argv_to_kern(argv, argv_kern, argc);
 
   // replace the address space of the calling process 
@@ -120,7 +127,6 @@ sys_execv(struct trapframe *tf, pid_t *retval) {
 
   struct addrspace *entering_as = as_create();
   if (entering_as ==NULL) {
-    kfree(argv_kern);
     vfs_close(v);
     return ENOMEM;
   }
@@ -131,7 +137,6 @@ sys_execv(struct trapframe *tf, pid_t *retval) {
   // Load the executable.
   result = load_elf(v, &entrypoint);
   if (result) {
-    kfree(argv_kern);
     vfs_close(v);
     return result;
   }
@@ -142,19 +147,24 @@ sys_execv(struct trapframe *tf, pid_t *retval) {
   // Define the user stack in the address space
   result = as_define_stack(curproc->p_addrspace, &stackptr);
   if (result) {
-    kfree(argv_kern);
     return result;
   }
 
   // copy the strings to the user stack
   copy_argv_to_user_stack(argv_kern, argc, &stackptr);
-
+  
   char **argv_user = (char **)stackptr;
+  DEBUG(DB_PROC_SYSCALL, "Previous Stack Pointer: %x\n", stackptr);
 
-  kfree(argv_kern);
+  // Make sure stack pointer is 8 bit aligned
+  if (stackptr % 8 != 0) {
+    stackptr -= (8 - stackptr % 8);
+  }
+
+  DEBUG(DB_PROC_SYSCALL, "Aligned Stack Pointer: %x\n", stackptr);
+
   splx(spl);
-
-  enter_new_process(argc - 1 /*argc*/, (userptr_t) *argv_user /*userspace addr of argv*/,
+  enter_new_process(argc /*argc*/, (userptr_t) *argv_user /*userspace addr of argv*/,
         stackptr, entrypoint);
 
   // should not reach here

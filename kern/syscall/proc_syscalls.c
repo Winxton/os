@@ -15,6 +15,152 @@
 #include <spl.h>
 #include <synch.h>
 #include <mips/trapframe.h>
+#include <array.h>
+
+#include <kern/fcntl.h>
+#include <vfs.h>
+
+static void copy_argv_to_kern(char **argv, char **argv_kern, int arg_num) {
+
+  for (int idx = 0; idx < arg_num; idx ++) {
+
+    DEBUG(DB_PROC_SYSCALL, "---------------\n");
+    DEBUG(DB_PROC_SYSCALL, "argv[%d]: %s \n", idx, argv[idx]);
+
+    int char_length = strlen(argv[idx]);
+    DEBUG(DB_PROC_SYSCALL, "length of argv[%d]: %d \n", idx, char_length);
+
+    void *usersrc = argv[idx];
+
+    // copy it into kernel space
+
+    argv_kern[idx] = kmalloc( (char_length + 1) * sizeof(char));
+
+    size_t result_str_len;
+    copyinstr(usersrc, argv_kern[idx], char_length * sizeof(char), &result_str_len);
+  }
+}
+
+static void copy_argv_to_user_stack(char **argv_kern, int num_args, vaddr_t *stackptr){
+
+  int char_addresses[num_args];
+
+  // copy each string to the user stack
+  for (int idx = num_args-1; idx >= 0; idx --) {
+    DEBUG(DB_PROC_SYSCALL, "--------\n");
+
+    const char *str = argv_kern[idx];
+    int str_len = strlen(str) + 1; // includes null terminator
+    DEBUG(DB_PROC_SYSCALL, "str_len: %d\n", str_len);  
+
+    // pad by 4 bits so that its pointers are bit aligned
+    int padding = 0;
+    if (str_len % 4 != 0) {
+      padding = 4 - str_len % 4;
+    }
+
+    DEBUG(DB_PROC_SYSCALL, "Padding: %d \n", padding);
+
+    *stackptr -= (str_len + padding);
+    
+    size_t bytes_copied;
+    copyoutstr(str, (userptr_t) *stackptr, (size_t)str_len, &bytes_copied);
+
+    char_addresses[idx] = *stackptr;
+
+    DEBUG(DB_PROC_SYSCALL, "Bytes Copied: %d \n", bytes_copied);
+  }
+
+  // copy each char pointer to the user stack
+  for (int idx = num_args-1; idx >= 0; idx --) {
+      // copy char pointer
+      *stackptr -= 4;
+      copyout((void *)&char_addresses[idx], (userptr_t)*stackptr, 4);
+  }
+
+  // copy pointer to char pointers (char ** argv)
+  copyout((void *)stackptr, (userptr_t)(*stackptr - 4), 4);
+  *stackptr -= 4;
+};
+
+int
+sys_execv(struct trapframe *tf, pid_t *retval) {
+  int spl = splhigh();
+
+  *retval = 0;
+  int result;
+  vaddr_t entrypoint, stackptr;
+
+  char *progname = (char *)tf->tf_a0;
+  struct vnode *v = curproc->p_cwd;
+
+  // Open the file using the current working directory. 
+  result = vfs_open(progname, O_RDONLY, 0, &v);
+  if (result) {
+    return result;
+  }
+
+  char **argv = (char **)tf->tf_a1;
+  
+  int argc = 0;
+  while (argv[argc] != NULL) {
+    argc ++;
+  }
+
+  char **argv_kern = kmalloc(argc * sizeof(char *));
+
+  copy_argv_to_kern(argv, argv_kern, argc);
+
+  // replace the address space of the calling process 
+  // with a new address space containing a new program.
+  struct addrspace *as;
+  as_deactivate();
+  as = curproc_setas(NULL);
+  as_destroy(as); // destroy the old address space
+
+  struct addrspace *entering_as = as_create();
+  if (entering_as ==NULL) {
+    kfree(argv_kern);
+    vfs_close(v);
+    return ENOMEM;
+  }
+  // use the newly created address space
+  curproc_setas(entering_as);
+  as_activate();
+
+  // Load the executable.
+  result = load_elf(v, &entrypoint);
+  if (result) {
+    kfree(argv_kern);
+    vfs_close(v);
+    return result;
+  }
+
+  // Done with the file now.
+  vfs_close(v);
+
+  // Define the user stack in the address space
+  result = as_define_stack(curproc->p_addrspace, &stackptr);
+  if (result) {
+    kfree(argv_kern);
+    return result;
+  }
+
+  // copy the strings to the user stack
+  copy_argv_to_user_stack(argv_kern, argc, &stackptr);
+
+  char **argv_user = (char **)stackptr;
+
+  kfree(argv_kern);
+  splx(spl);
+
+  enter_new_process(argc - 1 /*argc*/, (userptr_t) *argv_user /*userspace addr of argv*/,
+        stackptr, entrypoint);
+
+  // should not reach here
+  panic("Should be in the execv function");
+  return 0;
+}
 
 int 
 sys_fork(struct trapframe *tf, pid_t *retval) 

@@ -134,8 +134,7 @@ void thread_shutdown(void);
  * Make a new thread, which will start executing at "func". The thread
  * will belong to the process "proc", or to the current thread's
  * process if "proc" is null. The "data" arguments (one pointer, one
- * number) are passed to the function. The current thread is used as a
- * prototype for creating the new one. Returns an error code. The
+ * number) are passed to the function. The current thread is used as a * prototype for creating the new one. Returns an error code. The
  * thread structure for the new thread is not returned; it is not in
  * general safe to refer to it as the new thread may exit and
  * disappear at any time without notice.

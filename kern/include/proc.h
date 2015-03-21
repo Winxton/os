@@ -76,6 +76,9 @@ struct proc {
 
 #if OPT_A2
 
+// lock for modifying the process table, since multiple threads may change it
+struct lock *proc_table_lock;
+
 #define _PROC_RUNNING 1
 #define _PROC_EXITED 0
 

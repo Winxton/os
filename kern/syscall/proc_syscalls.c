@@ -196,7 +196,10 @@ sys_fork(struct trapframe *tf, pid_t *retval)
 
   // create a new process based on the current process
   // copies the address as well
+  lock_acquire(proc_table_lock);
   struct proc* new_proc = proc_create_runprogram("[Forked]");
+  lock_release(proc_table_lock);
+
   // Out of memory
   if (new_proc == NULL) {
     splx(spl);
@@ -208,6 +211,7 @@ sys_fork(struct trapframe *tf, pid_t *retval)
   struct addrspace *as;
   err = as_copy(cur_addrspace, &as);
   if (err) {
+    splx(spl);
     return ENOMEM;
   }
   new_proc->p_addrspace = as;
@@ -225,7 +229,7 @@ sys_fork(struct trapframe *tf, pid_t *retval)
 
   struct trapframe *tf_copy = kmalloc(sizeof(struct trapframe));
   if (tf_copy == NULL) {
-    splx(spl); 
+    splx(spl);
     return ENOMEM;
   }
   *tf_copy = *tf;
@@ -250,7 +254,6 @@ sys_fork(struct trapframe *tf, pid_t *retval)
   // set the return value of the parent to the PID of the forked process
   *retval = new_proc->info->pid;
 
-  // lower spl
   splx(spl);
   return 0;
 }
@@ -291,9 +294,11 @@ void sys__exit(int exitcode) {
   proc_destroy(p);
 
 #if OPT_A2
+lock_acquire(proc_table_lock);
   // Remove it from the process info table
   // handles cleanup of unused process information
   proc_table_process_exited(cur_pid, exitcode);
+lock_release(proc_table_lock);
 #endif
 
   thread_exit();
@@ -335,7 +340,9 @@ sys_waitpid(pid_t pid,
   }
 
 #if OPT_A2
+lock_acquire(proc_table_lock);
   struct proc_info *child_proc_info = proc_table_get_process_info(pid);
+lock_release(proc_table_lock);
 
   // The pid argument named a nonexistent process.
   if (child_proc_info == NULL) {

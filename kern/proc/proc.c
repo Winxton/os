@@ -348,6 +348,10 @@ proc_destroy(struct proc *proc)
 void
 proc_bootstrap(void)
 {
+#ifdef OPT_A2
+  proc_table_lock = lock_create("proc table lock");
+#endif
+
   kproc = proc_create("[kernel]");
   if (kproc == NULL) {
     panic("proc_create for kproc failed\n");
@@ -362,7 +366,7 @@ proc_bootstrap(void)
   if (no_proc_sem == NULL) {
     panic("could not create no_proc_sem semaphore\n");
   }
-#endif // UW 
+#endif // UW
 }
 
 /*

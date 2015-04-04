@@ -36,6 +36,7 @@
 
 
 #include <vm.h>
+#include "opt-A3.h"
 
 struct vnode;
 
@@ -47,6 +48,31 @@ struct vnode;
  * You write this.
  */
 
+#ifdef OPT_A3
+struct coremap_val {
+  struct addrspace * addrspace;
+  unsigned int continuous;
+  bool used;
+};
+
+struct addrspace {
+  vaddr_t as_vbase1;
+  paddr_t *page_table1;
+  size_t as_npages1;
+
+  vaddr_t as_vbase2;
+  paddr_t *page_table2;
+  size_t as_npages2;
+
+  paddr_t *page_table_stack;
+  
+  bool is_loading;
+
+  // p base 1 and 2
+};
+
+#else
+
 struct addrspace {
   vaddr_t as_vbase1;
   paddr_t as_pbase1;
@@ -56,6 +82,7 @@ struct addrspace {
   size_t as_npages2;
   paddr_t as_stackpbase;
 };
+#endif
 
 /*
  * Functions in addrspace.c:

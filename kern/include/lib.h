@@ -91,6 +91,7 @@
 #define DB_SYNCPROB    0x1000
  
 #define DB_PROC_SYSCALL 0x2000
+#define DB_AWESOME_VM 	0x4000
 
 extern uint32_t dbflags;
 

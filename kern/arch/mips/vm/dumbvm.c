@@ -179,6 +179,7 @@ free_frames(paddr_t paddr) {
 		coremap[frame].addrspace = NULL;
 		coremap[frame].used = false; 
 		coremap[frame].continuous = 0;
+		pages_used -= coremap[frame].continuous;
 	}
 	spinlock_release(&stealmem_lock);
 }
@@ -681,6 +682,29 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 
 #ifdef OPT_A3
 	// TODO
+
+	// move page by page
+	KASSERT(new->page_table1 != 0);
+	KASSERT(new->page_table2 != 0);
+	KASSERT(new->page_table_stack != 0);
+
+	for (unsigned int page = 0; page < old->as_npages1; page ++) {
+		memmove((void *)PADDR_TO_KVADDR(new->page_table1[page]),
+			(const void *)PADDR_TO_KVADDR(old->page_table1[page]),
+			PAGE_SIZE);
+	}
+
+	for (unsigned int page = 0; page < old->as_npages2; page ++) {
+		memmove((void *)PADDR_TO_KVADDR(new->page_table2[page]),
+			(const void *)PADDR_TO_KVADDR(old->page_table2[page]),
+			PAGE_SIZE);
+	}
+
+	for (unsigned int page = 0; page < DUMBVM_STACKPAGES; page ++) {
+		memmove((void *)PADDR_TO_KVADDR(new->page_table_stack[page]),
+			(const void *)PADDR_TO_KVADDR(old->page_table_stack[page]),
+			PAGE_SIZE);
+	}
 
 #else
 	KASSERT(new->as_pbase1 != 0);
